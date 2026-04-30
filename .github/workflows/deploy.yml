@@ -1,0 +1,179 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+        type: choice
+        options: [production, staging]
+
+env:
+  AWS_REGION: us-east-1
+  ENVIRONMENT: ${{ github.event.inputs.environment || 'production' }}
+
+jobs:
+  # ─── Build & Push Backend ──────────────────────────────────────────────────
+  build-backend:
+    name: Build Backend
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push backend image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: polymarket-backend-${{ env.ENVIRONMENT }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./backend
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+  # ─── Build & Push Frontend ─────────────────────────────────────────────────
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get ALB DNS from CloudFormation
+        id: alb
+        run: |
+          ALB_URL=$(aws cloudformation describe-stacks \
+            --stack-name polymarket-agent-${{ env.ENVIRONMENT }} \
+            --query "Stacks[0].Outputs[?OutputKey=='ALBDnsName'].OutputValue" \
+            --output text 2>/dev/null || echo "http://localhost:3000")
+          echo "url=$ALB_URL" >> $GITHUB_OUTPUT
+
+      - name: Build, tag, and push frontend image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: polymarket-frontend-${{ env.ENVIRONMENT }}
+          IMAGE_TAG: ${{ github.sha }}
+          VITE_API_URL: ${{ steps.alb.outputs.url }}
+          VITE_WS_URL: ${{ steps.alb.outputs.url }}
+        run: |
+          docker build \
+            --build-arg VITE_API_URL=$VITE_API_URL \
+            --build-arg VITE_WS_URL=$(echo $VITE_WS_URL | sed 's/http/ws/') \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            ./frontend
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+  # ─── Deploy Infrastructure ─────────────────────────────────────────────────
+  deploy-infra:
+    name: Deploy CloudFormation
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file infra/cloudformation.yml \
+            --stack-name polymarket-agent-${{ env.ENVIRONMENT }} \
+            --parameter-overrides \
+              Environment=${{ env.ENVIRONMENT }} \
+              BackendImage=${{ needs.build-backend.outputs.image }} \
+              FrontendImage=${{ needs.build-frontend.outputs.image }} \
+              VpcId=${{ secrets.AWS_VPC_ID }} \
+              SubnetIds=${{ secrets.AWS_SUBNET_IDS }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Get deployment URL
+        run: |
+          URL=$(aws cloudformation describe-stacks \
+            --stack-name polymarket-agent-${{ env.ENVIRONMENT }} \
+            --query "Stacks[0].Outputs[?OutputKey=='ALBDnsName'].OutputValue" \
+            --output text)
+          echo "✅ Deployed to: $URL"
+
+  # ─── Update ECS Services ───────────────────────────────────────────────────
+  deploy-services:
+    name: Update ECS Services
+    runs-on: ubuntu-latest
+    needs: [deploy-infra]
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Force new deployment for backend
+        run: |
+          aws ecs update-service \
+            --cluster polymarket-agent-${{ env.ENVIRONMENT }} \
+            --service polymarket-backend-${{ env.ENVIRONMENT }} \
+            --force-new-deployment
+
+      - name: Force new deployment for frontend
+        run: |
+          aws ecs update-service \
+            --cluster polymarket-agent-${{ env.ENVIRONMENT }} \
+            --service polymarket-frontend-${{ env.ENVIRONMENT }} \
+            --force-new-deployment
+
+      - name: Wait for services to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster polymarket-agent-${{ env.ENVIRONMENT }} \
+            --services \
+              polymarket-backend-${{ env.ENVIRONMENT }} \
+              polymarket-frontend-${{ env.ENVIRONMENT }}
+          echo "✅ All services are stable"
