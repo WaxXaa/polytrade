@@ -1,117 +1,57 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { leaderboardService } from '../services/leaderboard.js';
-import { marketDataService } from '../services/market.js';
-import { riskManagementService } from '../services/risk.js';
-import { tradeExecutor } from '../services/executor.js';
+import type { AgentCore } from '../services/agent-core.js';
+import type { RiskConfig } from '../models/types.js';
 
-export async function restRoutes(fastify: FastifyInstance): Promise<void> {
-  
-  // Health check
-  fastify.get('/health', async (request: FastifyRequest, reply: FastifyReply) => {
-    return { status: 'ok', timestamp: Date.now() };
-  });
+export function createRestRoutes(agent: AgentCore) {
+  return async function restRoutes(fastify: FastifyInstance): Promise<void> {
 
-  // Leaderboard endpoints
-  fastify.get('/api/leaderboard', async (request: FastifyRequest, reply: FastifyReply) => {
-    const limit = parseInt(request.query['limit'] as string) || 10;
-    const traders = await leaderboardService.getTopTraders(limit);
-    return { success: true, data: traders };
-  });
+    fastify.get('/health', async (_request: FastifyRequest, _reply: FastifyReply) => {
+      return { status: 'ok', timestamp: Date.now(), mode: agent.isPaperMode() ? 'paper' : 'real' };
+    });
 
-  fastify.get('/api/traders/:address', async (request: FastifyRequest<{ Params: { address: string } }>, reply: FastifyReply) => {
-    const trader = await leaderboardService.getTraderByAddress(request.params.address);
-    if (!trader) {
-      return reply.code(404).send({ success: false, error: 'Trader not found' });
-    }
-    return { success: true, data: trader };
-  });
+    fastify.get('/api/leaderboard', async (request: FastifyRequest, reply: FastifyReply) => {
+      const query = request.query as Record<string, string>;
+      const limit = parseInt(query['limit'] || '10');
+      const traders = agent.getTopTraders().slice(0, limit);
+      return { success: true, data: traders };
+    });
 
-  // Market endpoints
-  fastify.get('/api/markets', async (request: FastifyRequest, reply: FastifyReply) => {
-    const limit = parseInt(request.query['limit'] as string) || 50;
-    const markets = await marketDataService.getMarkets(limit);
-    return { success: true, data: markets };
-  });
+    fastify.get('/api/positions', async (_request: FastifyRequest, _reply: FastifyReply) => {
+      const positions = agent.getOpenPositions();
+      return { success: true, data: positions };
+    });
 
-  fastify.get('/api/markets/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-    const market = await marketDataService.getMarket(request.params.id);
-    if (!market) {
-      return reply.code(404).send({ success: false, error: 'Market not found' });
-    }
-    return { success: true, data: market };
-  });
+    fastify.get('/api/config/risk', async (_request: FastifyRequest, _reply: FastifyReply) => {
+      return { success: true, data: agent.getRiskConfig() };
+    });
 
-  fastify.get('/api/markets/:id/prices', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-    const prices = await marketDataService.getMarketPrices(request.params.id);
-    return { success: true, data: prices };
-  });
+    fastify.post('/api/config/risk', async (request: FastifyRequest, reply: FastifyReply) => {
+      const config = request.body as RiskConfig;
+      agent.updateRiskConfig(config);
+      return { success: true, data: agent.getRiskConfig() };
+    });
 
-  // Risk management config endpoints
-  fastify.get('/api/config/risk', async (request: FastifyRequest, reply: FastifyReply) => {
-    return { success: true, data: riskManagementService.getConfig() };
-  });
+    fastify.post('/api/mode', async (request: FastifyRequest, reply: FastifyReply) => {
+      const { mode } = request.body as { mode: 'paper' | 'real' };
+      if (mode !== 'paper' && mode !== 'real') {
+        return reply.code(400).send({ success: false, error: 'Mode must be paper or real' });
+      }
+      await agent.switchMode(mode);
+      return { success: true, data: { mode } };
+    });
 
-  fastify.post('/api/config/risk', async (request: FastifyRequest, reply: FastifyReply) => {
-    const config = request.body as any;
-    riskManagementService.updateConfig(config);
-    return { success: true, data: riskManagementService.getConfig() };
-  });
+    fastify.get('/api/status', async (_request: FastifyRequest, _reply: FastifyReply) => {
+      return { success: true, data: agent.getStatus() };
+    });
 
-  // Positions endpoints
-  fastify.get('/api/positions', async (request: FastifyRequest, reply: FastifyReply) => {
-    const positions = riskManagementService.getPositions();
-    return { success: true, data: positions };
-  });
+    fastify.post('/api/pause', async (_request: FastifyRequest, _reply: FastifyReply) => {
+      agent.pause();
+      return { success: true, data: agent.getStatus() };
+    });
 
-  // Trade execution endpoints (for manual trading or testing)
-  fastify.post('/api/execute', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { tokenId, side, amount, type, price } = request.body as any;
-    
-    if (!tradeExecutor.isInitialized()) {
-      return reply.code(400).send({ 
-        success: false, 
-        error: 'Executor not initialized. Please connect wallet first.' 
-      });
-    }
-
-    let result;
-    if (type === 'market') {
-      result = await tradeExecutor.executeMarketOrder(tokenId, side, amount);
-    } else if (type === 'limit' && price) {
-      result = await tradeExecutor.executeLimitOrder(tokenId, side, amount, price);
-    } else {
-      return reply.code(400).send({ 
-        success: false, 
-        error: 'Invalid trade parameters' 
-      });
-    }
-
-    return { success: result.success, data: result };
-  });
-
-  // Wallet connection (initialize executor)
-  fastify.post('/api/wallet/connect', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { address, privateKey, signer, apiCredentials } = request.body as any;
-    
-    try {
-      await tradeExecutor.initialize({
-        userAddress: address,
-        privateKey,
-        signer,
-        apiCredentials,
-      });
-      
-      return { success: true, data: { connected: true, address } };
-    } catch (error: any) {
-      return reply.code(400).send({ 
-        success: false, 
-        error: error.message || 'Failed to connect wallet' 
-      });
-    }
-  });
-
-  fastify.post('/api/wallet/disconnect', async (request: FastifyRequest, reply: FastifyReply) => {
-    tradeExecutor.disconnect();
-    return { success: true, data: { connected: false } };
-  });
+    fastify.post('/api/resume', async (_request: FastifyRequest, _reply: FastifyReply) => {
+      agent.resume();
+      return { success: true, data: agent.getStatus() };
+    });
+  };
 }

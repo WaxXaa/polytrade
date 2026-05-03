@@ -1,89 +1,149 @@
+import { useState } from 'react';
+import { Icon } from './ui/Icon';
 import { useAppStore, type Trader } from '@/stores';
-import { formatCompactNumber, formatPercent, truncateAddress } from '@/lib/utils';
-import { cn } from '@/lib/utils';
-import { Button } from './ui/button';
+import { truncateAddress } from '@/lib/utils';
+import { useLeaderboard } from '@/hooks/useApi';
 
-export function LeaderboardPanel() {
-  const { traders, toggleFollowTrader } = useAppStore();
+function fmtCompact(n: number): string {
+  if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return n.toString();
+}
+
+const RANK_STYLES: Record<number, { bg: string; color: string }> = {
+  0: { bg: 'oklch(0.7 0.15 80 / 0.2)',  color: '#fbbf24' },
+  1: { bg: 'oklch(0.7 0.03 240 / 0.2)', color: '#94a3b8' },
+  2: { bg: 'oklch(0.6 0.1 55 / 0.2)',   color: '#d97706' },
+};
+
+interface LeaderboardPanelProps {
+  onSelectTrader: (trader: Trader) => void;
+}
+
+export function LeaderboardPanel({ onSelectTrader }: LeaderboardPanelProps) {
+  const { traders: storeTraders, toggleFollowTrader } = useAppStore();
+  const { data: apiTraders } = useLeaderboard(10);
+
+  const traders: Trader[] = apiTraders && apiTraders.length > 0
+    ? apiTraders.map((t) => ({
+        rank: String(t.rank),
+        proxyWallet: t.proxyWallet,
+        userName: t.name,
+        vol: t.volume,
+        pnl: t.pnl,
+      }))
+    : storeTraders;
 
   return (
-    <div className="cyber-border rounded-xl p-4 h-full">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-bold flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-          TOP 10 TRADERS
-        </h2>
+    <div style={{ background: 'var(--pt-surface-1)', border: '1px solid var(--pt-border)', borderRadius: 12, overflow: 'hidden', height: '100%' }}>
+      {/* Header */}
+      <div style={{
+        padding: '16px 20px', borderBottom: '1px solid var(--pt-border)',
+        display: 'flex', alignItems: 'center', gap: 8,
+      }}>
+        <Icon name="users" size={16} />
+        <span style={{ fontWeight: 600, fontSize: 14 }}>Top Traders</span>
       </div>
 
-      <div className="space-y-2 max-h-[600px] overflow-y-auto pr-2">
+      {/* List */}
+      <div style={{ maxHeight: 480, overflowY: 'auto' }}>
         {traders.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
-            Loading traders...
+          <div style={{ padding: 32, textAlign: 'center', color: 'var(--pt-text-3)', fontSize: 13 }}>
+            Loading traders…
           </div>
         ) : (
-          traders.slice(0, 10).map((trader, index) => (
-            <div
-              key={trader.proxyWallet}
-              className={cn(
-                "group p-3 rounded-lg border transition-all",
-                trader.following
-                  ? "border-cyan-500/50 bg-cyan-500/5"
-                  : "border-white/5 hover:border-white/20 bg-card/50"
-              )}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className={cn(
-                    "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold",
-                    index === 0 && "bg-yellow-500/20 text-yellow-400",
-                    index === 1 && "bg-gray-400/20 text-gray-300",
-                    index === 2 && "bg-amber-600/20 text-amber-500",
-                    index > 2 && "bg-muted text-muted-foreground"
-                  )}>
-                    {index + 1}
-                  </span>
-                  <div>
-                    <div className="font-medium text-sm flex items-center gap-2">
-                      {trader.userName || truncateAddress(trader.proxyWallet)}
-                      {trader.verifiedBadge && (
-                        <span className="text-cyan-400 text-xs">✓</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {trader.xUsername && `@${trader.xUsername}`}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="text-right">
-                  <div className={cn(
-                    "font-mono font-bold",
-                    trader.pnl >= 0 ? "text-green-400" : "text-red-400"
-                  )}>
-                    {trader.pnl >= 0 ? '+' : ''}{formatCompactNumber(trader.pnl)}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    Vol: {formatCompactNumber(trader.vol)}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-2 flex justify-end">
-                <Button
-                  size="sm"
-                  variant={trader.following ? "default" : "outline"}
-                  className={cn(
-                    "text-xs h-7 px-3",
-                    trader.following && "bg-cyan-500/20 text-cyan-400 border-cyan-500/50"
-                  )}
-                  onClick={() => toggleFollowTrader(trader.proxyWallet)}
-                >
-                  {trader.following ? 'Following' : 'Follow'}
-                </Button>
-              </div>
-            </div>
+          traders.slice(0, 10).map((t, i) => (
+            <TraderRow
+              key={t.proxyWallet}
+              trader={t}
+              rank={i}
+              onSelect={() => onSelectTrader(t)}
+              onToggleFollow={() => toggleFollowTrader(t.proxyWallet)}
+            />
           ))
         )}
+      </div>
+    </div>
+  );
+}
+
+interface TraderRowProps {
+  trader: Trader;
+  rank: number;
+  onSelect: () => void;
+  onToggleFollow: () => void;
+}
+
+function TraderRow({ trader, rank, onSelect, onToggleFollow }: TraderRowProps) {
+  const [hov, setHov] = useState(false);
+  const rankStyle = RANK_STYLES[rank] ?? { bg: 'var(--pt-surface-2)', color: 'var(--pt-text-3)' };
+  const initials = (trader.userName || truncateAddress(trader.proxyWallet)).slice(0, 2).toUpperCase();
+
+  return (
+    <div
+      onClick={onSelect}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '10px 16px', borderBottom: '1px solid var(--pt-border)',
+        cursor: 'pointer', transition: 'background 0.15s',
+        background: hov ? 'var(--pt-surface-2)' : 'transparent',
+      }}
+    >
+      {/* Rank */}
+      <span style={{
+        width: 24, height: 24, borderRadius: 6, flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 11, fontWeight: 700,
+        background: rankStyle.bg, color: rankStyle.color,
+      }}>
+        {rank + 1}
+      </span>
+
+      {/* Avatar */}
+      <div style={{
+        width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+        background: `oklch(0.5 0.12 ${(rank * 50) % 360})`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 11, fontWeight: 700, color: '#fff',
+      }}>
+        {initials}
+      </div>
+
+      {/* Name + stats */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>
+            {trader.userName || truncateAddress(trader.proxyWallet)}
+          </span>
+          {trader.verifiedBadge && <span style={{ color: 'var(--pt-accent)', fontSize: 12 }}>✓</span>}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--pt-text-3)' }}>
+          {fmtCompact(trader.vol)} vol
+        </div>
+      </div>
+
+      {/* PnL + follow */}
+      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+        <div style={{
+          fontFamily: 'var(--pt-mono)', fontWeight: 700, fontSize: 13,
+          color: trader.pnl >= 0 ? 'var(--pt-green)' : 'var(--pt-red)',
+        }}>
+          {trader.pnl >= 0 ? '+' : ''}{fmtCompact(trader.pnl)}
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleFollow(); }}
+          style={{
+            marginTop: 2, padding: '2px 10px', borderRadius: 6, border: 'none',
+            fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--pt-font)',
+            background: trader.following ? 'var(--pt-accent-dim)' : 'var(--pt-surface-2)',
+            color: trader.following ? 'var(--pt-accent)' : 'var(--pt-text-3)',
+            transition: 'all 0.15s',
+          }}
+        >
+          {trader.following ? 'Following' : 'Follow'}
+        </button>
       </div>
     </div>
   );

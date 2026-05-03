@@ -1,102 +1,118 @@
-import { useState } from 'react';
-import { useAccount, useConnect, useDisconnect } from 'wagmi';
-import { Settings, Wallet, Loader2 } from 'lucide-react';
-import { cn, truncateAddress, formatCurrency } from '@/lib/utils';
-import { useAppStore } from '@/stores';
-import { Button } from './ui/button';
-import { Badge } from './ui/badge';
+import { useLocation, Link } from 'react-router-dom';
+import { Icon } from './ui/Icon';
+import { StatusDot } from './ui/StatusDot';
+import { PtBadge } from './ui/PtBadge';
+import { TabBar } from './ui/TabBar';
+import { WsStatusIndicator } from './WsStatusIndicator';
 
-export function Header() {
-  const { address, isConnected, isConnecting } = useAccount();
-  const { connect, connectors } = useConnect();
-  const { disconnect } = useDisconnect();
-  const { walletConnected, setWalletConnected, setWalletAddress } = useAppStore();
-  const [showWalletMenu, setShowWalletMenu] = useState(false);
+interface HeaderProps {
+  walletMode: 'simulation' | 'real';
+  onWalletModeChange: (mode: 'simulation' | 'real') => void;
+  walletConnected: boolean;
+  walletAddress: string | null;
+  onConnectWallet: () => void;
+  onDisconnectWallet: () => void;
+  agentActive: boolean;
+}
 
-  const handleConnect = async () => {
-    const connector = connectors.find(c => c.type === 'injected');
-    if (connector) {
-      try {
-        await connect({ connector });
-      } catch (error) {
-        console.error('Failed to connect:', error);
-      }
-    }
-  };
+const NAV = [
+  { id: '/' as string, label: 'Dashboard', icon: 'chart' as const },
+  { id: '/positions', label: 'Positions',  icon: 'briefcase' as const },
+  { id: '/history',   label: 'History',   icon: 'history' as const },
+  { id: '/settings',  label: 'Settings',  icon: 'settings' as const },
+];
 
-  const handleDisconnect = () => {
-    disconnect();
-    setWalletConnected(false);
-    setWalletAddress(null);
-  };
-
-  // Sync wagmi state to store
-  if (address && !walletConnected) {
-    setWalletConnected(true);
-    setWalletAddress(address);
-  }
+export function Header({
+  walletMode, onWalletModeChange,
+  walletConnected, walletAddress,
+  onConnectWallet, onDisconnectWallet,
+  agentActive,
+}: HeaderProps) {
+  const location = useLocation();
+  const currentPath = location.pathname === '/' ? '/' : location.pathname;
 
   return (
-    <header className="border-b border-white/10 bg-card/50 backdrop-blur-md sticky top-0 z-50">
-      <div className="px-4 lg:px-6 py-4 flex items-center justify-between">
-        {/* Logo */}
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500 to-magenta-500 flex items-center justify-center">
-              <span className="text-xl font-bold text-black">P</span>
-            </div>
-            <div className="absolute -top-1 -right-1 w-3 h-3 bg-success rounded-full animate-pulse" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-gradient">POLYMARKET AI</h1>
-            <p className="text-xs text-muted-foreground">Copy Trading Agent</p>
-          </div>
-        </div>
+    <header style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '0 24px', height: 56, flexShrink: 0, zIndex: 10,
+      borderBottom: '1px solid var(--pt-border)',
+      background: 'var(--pt-surface-1)',
+      gap: 16,
+    }}>
+      {/* Logo */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{
+          width: 32, height: 32, borderRadius: 8, fontWeight: 700, fontSize: 15,
+          background: 'linear-gradient(135deg, var(--pt-accent), oklch(0.55 0.2 280))',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff',
+        }}>P</div>
+        <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: '-0.3px' }}>polytrade</span>
+        <PtBadge variant="info" style={{ marginLeft: 4, gap: 5 }}>
+          <StatusDot status={agentActive ? 'live' : 'off'} size={6} />
+          {agentActive ? 'Agent Live' : 'Paused'}
+        </PtBadge>
+        <WsStatusIndicator />
+      </div>
 
-        {/* Status Indicators */}
-        <div className="flex items-center gap-4">
-          <Badge variant="outline" className="gap-2 border-cyan-500/50 text-cyan-400">
-            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-            LIVE
-          </Badge>
+      {/* Nav */}
+      <nav style={{ display: 'flex', gap: 2 }}>
+        {NAV.map(n => (
+          <Link
+            key={n.id}
+            to={n.id}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '6px 14px', borderRadius: 8,
+              fontSize: 13, fontWeight: 500,
+              fontFamily: 'var(--pt-font)',
+              background: currentPath === n.id ? 'var(--pt-accent-dim)' : 'transparent',
+              color: currentPath === n.id ? 'var(--pt-accent)' : 'var(--pt-text-3)',
+              transition: 'all 0.15s',
+              textDecoration: 'none',
+            }}
+          >
+            <Icon name={n.icon} size={15} />
+            {n.label}
+          </Link>
+        ))}
+      </nav>
 
-          {/* Wallet Connection */}
-          <div className="relative">
-            {isConnected && address ? (
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 border-green-500/50 text-green-400 hover:bg-green-500/10"
-                  onClick={handleDisconnect}
-                >
-                  <Wallet className="w-4 h-4" />
-                  <span className="hidden sm:inline">{truncateAddress(address)}</span>
-                </Button>
-              </div>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2 border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/10"
-                onClick={handleConnect}
-                disabled={isConnecting}
-              >
-                {isConnecting ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Wallet className="w-4 h-4" />
-                )}
-                Connect Wallet
-              </Button>
-            )}
-          </div>
+      {/* Right controls */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <TabBar
+          tabs={[{ id: 'simulation', label: 'Sim' }, { id: 'real', label: 'Real' }]}
+          active={walletMode}
+          onChange={(m) => onWalletModeChange(m as 'simulation' | 'real')}
+        />
 
-          {/* Settings Button */}
-          <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
-            <Settings className="w-5 h-5" />
-          </Button>
-        </div>
+        {walletConnected && walletAddress ? (
+          <button
+            onClick={onDisconnectWallet}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px',
+              borderRadius: 8, border: '1px solid var(--pt-green)',
+              background: 'oklch(0.45 0.12 155 / 0.1)', color: 'var(--pt-green)',
+              fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--pt-font)',
+            }}
+          >
+            <Icon name="wallet" size={14} />
+            {walletAddress.slice(0, 6)}…{walletAddress.slice(-4)}
+          </button>
+        ) : (
+          <button
+            onClick={onConnectWallet}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px',
+              borderRadius: 8, border: '1px solid var(--pt-border)',
+              background: 'var(--pt-surface-2)', color: 'var(--pt-text-2)',
+              fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--pt-font)',
+              transition: 'all 0.15s',
+            }}
+          >
+            <Icon name="wallet" size={14} />
+            Connect
+          </button>
+        )}
       </div>
     </header>
   );

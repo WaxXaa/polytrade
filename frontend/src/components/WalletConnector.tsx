@@ -1,6 +1,6 @@
-import { useWallet } from '../hooks/useWallet.js';
-import { Button } from './components/ui/button.js';
-import { Badge } from './components/ui/badge.js';
+import { useWallet } from '../hooks/useWallet';
+import { Button } from './ui/button';
+import { Badge } from './ui/badge';
 
 export function WalletConnector() {
   const {

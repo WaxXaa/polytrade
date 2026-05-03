@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { TradeHistoryItem, RiskAlert, AgentStatus, DailyMetrics } from '@/types/ws-events';
 
 export interface Trader {
   rank: string;
@@ -67,6 +68,18 @@ interface AppState {
   setWalletAddress: (address: string | null) => void;
   setWalletConnected: (connected: boolean) => void;
 
+  // WebSocket
+  wsStatus: 'connected' | 'connecting' | 'disconnected';
+  setWsStatus: (status: 'connected' | 'connecting' | 'disconnected') => void;
+
+  // Balance
+  balance: number;
+  setBalance: (balance: number) => void;
+
+  // Agent Status
+  agentStatus: AgentStatus | null;
+  setAgentStatus: (status: AgentStatus | null) => void;
+
   // Traders
   traders: Trader[];
   setTraders: (traders: Trader[]) => void;
@@ -89,6 +102,19 @@ interface AppState {
   addTradeSignal: (signal: TradeSignal) => void;
   updateTradeSignal: (id: string, updates: Partial<TradeSignal>) => void;
 
+  // Trade History (from backend)
+  tradeHistoryList: TradeHistoryItem[];
+  addTradeHistory: (item: TradeHistoryItem) => void;
+  setTradeHistory: (items: TradeHistoryItem[]) => void;
+
+  // Risk Alerts
+  riskAlerts: RiskAlert[];
+  addRiskAlert: (alert: RiskAlert) => void;
+
+  // Metrics
+  metrics: DailyMetrics | null;
+  setMetrics: (metrics: DailyMetrics | null) => void;
+
   // Risk Config
   riskConfig: RiskConfig;
   setRiskConfig: (config: Partial<RiskConfig>) => void;
@@ -106,6 +132,18 @@ export const useAppStore = create<AppState>((set) => ({
   walletConnected: false,
   setWalletAddress: (address) => set({ walletAddress: address }),
   setWalletConnected: (connected) => set({ walletConnected: connected }),
+
+  // WebSocket
+  wsStatus: 'disconnected',
+  setWsStatus: (wsStatus) => set({ wsStatus }),
+
+  // Balance
+  balance: 100,
+  setBalance: (balance) => set({ balance }),
+
+  // Agent Status
+  agentStatus: null,
+  setAgentStatus: (agentStatus) => set({ agentStatus }),
 
   // Traders
   traders: [],
@@ -146,6 +184,23 @@ export const useAppStore = create<AppState>((set) => ({
   updateTradeSignal: (id, updates) => set((state) => ({
     tradeSignals: state.tradeSignals.map((s) => s.id === id ? { ...s, ...updates } : s),
   })),
+
+  // Trade History (from backend)
+  tradeHistoryList: [],
+  addTradeHistory: (item) => set((state) => ({
+    tradeHistoryList: [item, ...state.tradeHistoryList].slice(0, 200),
+  })),
+  setTradeHistory: (tradeHistoryList) => set({ tradeHistoryList }),
+
+  // Risk Alerts
+  riskAlerts: [],
+  addRiskAlert: (alert) => set((state) => ({
+    riskAlerts: [alert, ...state.riskAlerts].slice(0, 50),
+  })),
+
+  // Metrics
+  metrics: null,
+  setMetrics: (metrics) => set({ metrics }),
 
   // Risk Config
   riskConfig: {

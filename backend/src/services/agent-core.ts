@@ -1,14 +1,3 @@
-/**
- * AgentCore — orchestrates all backend components into a single autonomous agent.
- *
- * Flow: LeaderboardMonitor → TradeMonitor → AIDecisionEngine → PositionCalculator
- *       → RiskManager → TradeExecutor → DB persistence → WebSocket broadcast
- *
- * Lifecycle: start() / stop() with graceful shutdown.
- * On startup: restores open positions and config from DB.
- * Balance guard: pauses new trades when user balance < 5 USDC.
- */
-
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 
@@ -34,24 +23,21 @@ import type {
   RiskAlert,
 } from '../models/types';
 
-// ─── Config ───────────────────────────────────────────────────────────────────
+const STOP_LOSS_INTERVAL_MS = 30_000;
+const MAX_SIGNAL_CACHE = 50;
+const MAX_SEEN_TRADE_IDS = 10_000;
 
 export interface AgentCoreConfig {
   wsPort: number;
   clobApiKey: string;
   clobSecret: string;
   clobPassphrase: string;
-  /** Pre-created WebSocket server instance (started externally) */
+  privateKey?: string;
   wsServer?: WebSocketServer;
-  /** Estimated capital of each top trader (used for proportional calc). Default 10000 USDC */
   traderEstimatedCapital?: number;
-  /** Paper trading mode — simulates trades without touching CLOB API */
   paperMode?: boolean;
-  /** Starting balance for paper trading mode. Default 100 USDC */
   paperBalance?: number;
 }
-
-// ─── AgentCore ────────────────────────────────────────────────────────────────
 
 export class AgentCore {
   private readonly leaderboardMonitor: LeaderboardMonitor;
@@ -59,18 +45,21 @@ export class AgentCore {
   private readonly aiEngine: AIDecisionEngine;
   private readonly positionCalculator: PositionCalculatorImpl;
   private readonly riskManager: RiskManagerImpl;
-  private readonly tradeExecutor: TradeExecutor;
+  private tradeExecutor: TradeExecutor;
   private readonly wsServer: WebSocketServer;
 
   private openPositions: Position[] = [];
   private userBalance = 0;
   private walletAddress = '';
   private running = false;
+  private paused = false;
   private lastLeaderboardUpdate: Date | null = null;
   private lastTradeCheck: Date | null = null;
+  private stopLossInterval: ReturnType<typeof setInterval> | null = null;
 
   private readonly traderEstimatedCapital: number;
-  private readonly paperMode: boolean;
+  private paperMode: boolean;
+  private recentSignals: DetectedTrade[] = [];
 
   constructor(private readonly config: AgentCoreConfig) {
     this.traderEstimatedCapital = config.traderEstimatedCapital ?? 10_000;
@@ -87,13 +76,13 @@ export class AgentCore {
     if (this.paperMode) {
       const paperBalance = config.paperBalance ?? 100;
       this.tradeExecutor = new PaperTradeExecutorImpl(paperBalance);
-      this.userBalance = paperBalance;
-      console.info(`[AgentCore] 📝 PAPER TRADING MODE — $${paperBalance} virtual balance`);
+      console.info(`[AgentCore] PAPER TRADING MODE — $${paperBalance} virtual balance`);
     } else {
       this.tradeExecutor = new TradeExecutorImpl(
         config.clobApiKey,
         config.clobSecret,
         config.clobPassphrase,
+        config.privateKey,
       );
     }
 
@@ -110,8 +99,73 @@ export class AgentCore {
     return this.openPositions;
   }
 
+  onBroadcast(listener: (event: WSEvent) => void): () => void {
+    return this.wsServer.onBroadcast(listener);
+  }
+
+  getRiskConfig(): RiskConfig {
+    return this.riskManager.getConfig();
+  }
+
   isPaperMode() {
     return this.paperMode;
+  }
+
+  pause(): void {
+    this.paused = true;
+    console.info('[AgentCore] Paused — trade execution suspended.');
+    this.broadcastStatus();
+  }
+
+  resume(): void {
+    this.paused = false;
+    console.info('[AgentCore] Resumed — trade execution active.');
+    this.broadcastStatus();
+  }
+
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  getStatus(): AgentStatus {
+    const traders = this.leaderboardMonitor.getTopTraders();
+    return {
+      running: this.running,
+      paused: this.paused,
+      topTradersCount: traders.length,
+      openPositionsCount: this.openPositions.length,
+      tradesLastHour: this.riskManager.getExecutionsLastHour(),
+      lastLeaderboardUpdate: this.lastLeaderboardUpdate,
+      lastTradeCheck: this.lastTradeCheck,
+      mode: this.paperMode ? 'paper' : 'real',
+      balance: this.paperMode
+        ? (this.tradeExecutor as PaperTradeExecutorImpl).getVirtualBalance()
+        : this.userBalance,
+    };
+  }
+
+  async switchMode(mode: 'paper' | 'real'): Promise<void> {
+    if (mode === 'paper' && !this.paperMode) {
+      this.tradeExecutor.stop?.();
+      const paperBalance = this.config.paperBalance ?? 100;
+      this.tradeExecutor = new PaperTradeExecutorImpl(paperBalance);
+      this.userBalance = paperBalance;
+      this.paperMode = true;
+    } else if (mode === 'real' && this.paperMode) {
+      this.tradeExecutor.stop?.();
+      this.tradeExecutor = new TradeExecutorImpl(
+        this.config.clobApiKey,
+        this.config.clobSecret,
+        this.config.clobPassphrase,
+        this.config.privateKey,
+      );
+      if (this.running && this.walletAddress) {
+        await this.tradeExecutor.initialize?.(this.walletAddress);
+      }
+      this.userBalance = 0;
+      this.paperMode = false;
+    }
+    this.broadcastStatus();
   }
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
@@ -126,21 +180,16 @@ export class AgentCore {
     this.userBalance = initialBalance;
     this.running = true;
 
-    console.info('[AgentCore] Starting...');
+    console.info(`[AgentCore] Starting in ${this.paperMode ? 'paper' : 'real'} mode...`);
 
-    // 1. Start WebSocket server (only if not already started externally)
     if (!this.config.wsServer) {
       this.wsServer.start(this.config.wsPort);
     }
 
-    // 2. Restore state from DB
     await this.restoreState();
-
-    // 3. Load risk config from DB
     await this.riskManager.loadConfig();
     this.riskManager.setOpenPositions(this.openPositions);
 
-    // 4. Wire event handlers
     this.leaderboardMonitor.on('traders-updated', (changes: TraderChange[]) => {
       this.lastLeaderboardUpdate = new Date();
       this.broadcast({ type: 'traders-updated', data: changes });
@@ -151,9 +200,16 @@ export class AgentCore {
       void this.handleNewTrade(trade);
     });
 
-    // 5. Start monitors (non-blocking — let them run in background)
     void this.leaderboardMonitor.start();
     void this.tradeMonitor.start();
+
+    this.stopLossInterval = setInterval(() => {
+      void this.evaluateStopLossPeriodic();
+    }, STOP_LOSS_INTERVAL_MS);
+
+    if (!this.paperMode && walletAddress) {
+      await this.tradeExecutor.initialize?.(walletAddress);
+    }
 
     this.broadcastStatus();
     console.info('[AgentCore] Started.');
@@ -165,6 +221,11 @@ export class AgentCore {
     this.leaderboardMonitor.stop();
     this.tradeMonitor.stop();
     this.wsServer.stop();
+    if (this.stopLossInterval) {
+      clearInterval(this.stopLossInterval);
+      this.stopLossInterval = null;
+    }
+    this.tradeExecutor.stop?.();
     this.running = false;
 
     console.info('[AgentCore] Stopped.');
@@ -193,30 +254,30 @@ export class AgentCore {
   // ─── Core trade flow ─────────────────────────────────────────────────────────
 
   private async handleNewTrade(trade: DetectedTrade): Promise<void> {
-    // Balance guard
+    if (this.paused) {
+      console.info('[AgentCore] Paused — skipping trade.');
+      return;
+    }
+
     if (this.userBalance < 5) {
       console.info('[AgentCore] Balance < 5 USDC — skipping trade.');
       return;
     }
 
-    // Hourly rate limit
     if (!this.riskManager.canExecuteTrade()) {
       this.broadcastRiskAlert('trade-limit', 'Hourly trade limit reached — trade skipped.', 'warning');
       return;
     }
 
-    // Get market spread
     const marketSpread = await this.tradeExecutor.getMarketSpread(trade.tokenId);
 
-    // Find trader profile
     const traders = this.leaderboardMonitor.getTopTraders();
     const traderProfile = traders.find((t) => t.proxyWallet === trade.traderWallet);
     if (!traderProfile) return;
 
-    // AI decision
     const context = {
       detectedTrade: trade,
-      recentSignals: [],   // could be populated from a recent-signals cache
+      recentSignals: this.recentSignals,
       traderProfile,
       marketSpread,
       userBalance: this.userBalance,
@@ -227,10 +288,13 @@ export class AgentCore {
     const decision = await this.aiEngine.evaluateTrade(context);
 
     if (decision.action !== 'execute') {
-      return; // postpone or discard
+      this.recentSignals.push(trade);
+      if (this.recentSignals.length > MAX_SIGNAL_CACHE) {
+        this.recentSignals = this.recentSignals.slice(-MAX_SIGNAL_CACHE);
+      }
+      return;
     }
 
-    // Position calculation
     const posResult = this.positionCalculator.calculateProportionalPosition({
       tradeAmount: decision.adjustedAmount ?? trade.amount,
       traderEstimatedCapital: this.traderEstimatedCapital,
@@ -244,14 +308,12 @@ export class AgentCore {
       return;
     }
 
-    // Exposure check
     const riskCheck = this.riskManager.canOpenPosition(posResult.amount, this.userBalance);
     if (!riskCheck.allowed) {
       this.broadcastRiskAlert('exposure-limit', riskCheck.reason ?? 'Exposure limit reached', 'warning');
       return;
     }
 
-    // Execute order
     const orderResult = await this.tradeExecutor.executeOrder({
       tokenId: trade.tokenId,
       side: trade.action,
@@ -260,18 +322,17 @@ export class AgentCore {
       conditionId: trade.conditionId,
     });
 
-    // Record execution regardless of success
     if (orderResult.success) {
       this.riskManager.recordExecution();
 
-      // In paper mode, sync virtual balance from the paper executor
-      if (this.paperMode && this.tradeExecutor instanceof PaperTradeExecutorImpl) {
-        const newBalance = this.tradeExecutor.getVirtualBalance();
-        this.updateBalance(newBalance);
+      if (this.paperMode) {
+        const paperExec = this.tradeExecutor as PaperTradeExecutorImpl;
+        if (typeof paperExec.getVirtualBalance === 'function') {
+          this.updateBalance(paperExec.getVirtualBalance());
+        }
       }
     }
 
-    // Persist to DB
     const tradeId = randomUUID();
     try {
       await db.insert(tradeHistory).values({
@@ -295,7 +356,6 @@ export class AgentCore {
       console.error('[AgentCore] Failed to persist trade to DB:', err);
     }
 
-    // If successful, track open position
     if (orderResult.success && trade.action === 'BUY') {
       const pos: Position = {
         id: tradeId,
@@ -336,18 +396,34 @@ export class AgentCore {
       });
     }
 
-    // Broadcast trade execution event
     this.broadcast({
       type: 'trade-executed',
       data: { trade, decision, orderResult },
     });
 
+    this.recentSignals.push(trade);
+    if (this.recentSignals.length > MAX_SIGNAL_CACHE) {
+      this.recentSignals = this.recentSignals.slice(-MAX_SIGNAL_CACHE);
+    }
+
     this.broadcastStatus();
   }
 
-  // ─── Stop-loss evaluation ────────────────────────────────────────────────────
+  // ─── Stop-loss ───────────────────────────────────────────────────────────────
 
-  async evaluateStopLoss(currentPrices: Map<string, number>): Promise<void> {
+  private async evaluateStopLossPeriodic(): Promise<void> {
+    if (this.openPositions.length === 0) return;
+
+    const currentPrices = new Map<string, number>();
+    for (const pos of this.openPositions) {
+      try {
+        const spread = await this.tradeExecutor.getMarketSpread(pos.tokenId);
+        currentPrices.set(pos.tokenId, pos.entryPrice * (1 - spread / 100));
+      } catch {
+        // skip positions with no price data
+      }
+    }
+
     const actions = this.riskManager.evaluateStopLoss(this.openPositions, currentPrices);
 
     for (const action of actions) {
@@ -362,7 +438,6 @@ export class AgentCore {
         conditionId: pos.conditionId,
       });
 
-      // Remove from open positions
       this.openPositions = this.openPositions.filter((p) => p.id !== action.positionId);
       this.riskManager.setOpenPositions(this.openPositions);
 
@@ -414,16 +489,7 @@ export class AgentCore {
   }
 
   private broadcastStatus(): void {
-    const traders = this.leaderboardMonitor.getTopTraders();
-    const status: AgentStatus = {
-      running: this.running,
-      topTradersCount: traders.length,
-      openPositionsCount: this.openPositions.length,
-      tradesLastHour: 0, // RiskManager tracks this internally
-      lastLeaderboardUpdate: this.lastLeaderboardUpdate,
-      lastTradeCheck: this.lastTradeCheck,
-    };
-    this.broadcast({ type: 'agent-status', data: status });
+    this.broadcast({ type: 'agent-status', data: this.getStatus() });
   }
 
   private broadcastRiskAlert(
@@ -437,4 +503,3 @@ export class AgentCore {
     });
   }
 }
-

@@ -32,6 +32,14 @@ export class PaperTradeExecutorImpl implements TradeExecutor {
     return this.tradeCount;
   }
 
+  async initialize(_walletAddress: string): Promise<void> {
+    console.info('[PaperTradeExecutor] Initialize — no-op in paper mode.');
+  }
+
+  stop(): void {
+    console.info('[PaperTradeExecutor] Stopped.');
+  }
+
   async executeOrder(order: OrderParams): Promise<OrderResult> {
     const timestamp = new Date();
 

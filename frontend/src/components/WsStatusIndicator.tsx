@@ -1,5 +1,5 @@
-import { useAgent } from '../context/AgentContext.js';
-import { Badge } from './components/ui/badge.js';
+import { useAgent } from '../context/AgentContext';
+import { Badge } from './ui/badge';
 
 export function WsStatusIndicator() {
   const { wsStatus } = useAgent();

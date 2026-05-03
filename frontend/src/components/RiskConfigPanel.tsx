@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { useApi } from '../hooks/useApi.js';
-import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card.js';
-import { Button } from './components/ui/button.js';
-import { Input } from './components/ui/input.js';
-import { Separator } from './components/ui/separator.js';
+import { useApi } from '../hooks/useApi';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Separator } from './ui/separator';
 
 interface RiskConfig {
   maxExposurePercent: number;

@@ -1,18 +1,11 @@
 import { http, createConfig } from 'wagmi';
-import { mainnet, polygon } from 'wagmi/chains';
+import { polygon } from 'wagmi/chains';
 import { injected } from 'wagmi/connectors';
 
-export const config = createConfig({
+export const wagmiConfig = createConfig({
   chains: [polygon],
-  connectors: [
-    injected({
-      shimDisconnect: true,
-    }),
-  ],
+  connectors: [injected()],
   transports: {
     [polygon.id]: http(),
-    [mainnet.id]: http(),
   },
 });
-
-export const SUPPORTED_CHAIN = polygon;

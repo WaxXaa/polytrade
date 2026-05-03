@@ -1,32 +1,38 @@
-import * as React from "react";
-import { cva, type VariantProps } from "class-variance-authority";
-import { cn } from "@/lib/utils";
+import React from 'react';
 
-const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
-  {
-    variants: {
-      variant: {
-        default: "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
-        secondary: "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        destructive: "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
-        outline: "text-foreground",
-      },
-    },
-    defaultVariants: {
-      variant: "default",
-    },
-  }
-);
+type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
 
-export interface BadgeProps
-  extends React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof badgeVariants> {}
-
-function Badge({ className, variant, ...props }: BadgeProps) {
-  return (
-    <div className={cn(badgeVariants({ variant }), className)} {...props} />
-  );
+interface BadgeProps {
+  children: React.ReactNode;
+  variant?: BadgeVariant;
+  className?: string;
+  style?: React.CSSProperties;
 }
 
-export { Badge, badgeVariants };
+const variantStyles: Record<BadgeVariant, React.CSSProperties> = {
+  default:     { background: 'oklch(0.45 0.12 155 / 0.15)', color: 'var(--pt-green)',  border: '1px solid var(--pt-green)' },
+  secondary:   { background: 'var(--pt-surface-2)',           color: 'var(--pt-text-2)', border: '1px solid var(--pt-border)' },
+  destructive: { background: 'oklch(0.55 0.18 15 / 0.15)',   color: 'var(--pt-red)',   border: '1px solid var(--pt-red)' },
+  outline:     { background: 'transparent',                    color: 'var(--pt-text-2)', border: '1px solid var(--pt-border)' },
+};
+
+export function Badge({ children, variant = 'default', className = '', style }: BadgeProps) {
+  return (
+    <span
+      className={className}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: '2px 8px',
+        borderRadius: 6,
+        fontSize: 11,
+        fontWeight: 600,
+        whiteSpace: 'nowrap',
+        ...variantStyles[variant],
+        ...style,
+      }}
+    >
+      {children}
+    </span>
+  );
+}

@@ -1,7 +1,7 @@
-import { useAgent } from '../context/AgentContext.js';
-import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card.js';
-import { Badge } from './components/ui/badge.js';
-import { Skeleton } from './components/ui/skeleton.js';
+import { useAgent } from '../context/AgentContext';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Badge } from './ui/badge';
+import { Skeleton } from './ui/skeleton';
 
 export function TopTradersList() {
   const { topTraders, wsStatus } = useAgent();

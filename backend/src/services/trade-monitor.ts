@@ -35,8 +35,9 @@ export class TradeMonitorImpl extends EventEmitter implements TradeMonitor {
   private readonly leaderboardMonitor: LeaderboardMonitor;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
 
-  /** In-memory set of seen tradeIds for deduplication. */
+  /** In-memory set of seen tradeIds for deduplication. Trimmed to MAX_SEEN. */
   private readonly seenTradeIds = new Set<string>();
+  private static readonly MAX_SEEN = 10_000;
 
   constructor(leaderboardMonitor: LeaderboardMonitor) {
     super();
@@ -126,6 +127,14 @@ export class TradeMonitorImpl extends EventEmitter implements TradeMonitor {
       // Skip already-seen trades
       if (this.seenTradeIds.has(tradeId)) {
         continue;
+      }
+
+      // Trim oldest entries when Set grows too large
+      if (this.seenTradeIds.size > TradeMonitorImpl.MAX_SEEN) {
+        const it = this.seenTradeIds.values();
+        for (let i = 0; i < this.seenTradeIds.size - TradeMonitorImpl.MAX_SEEN / 2; i++) {
+          this.seenTradeIds.delete(it.next().value!);
+        }
       }
 
       // Mark as seen before validation to avoid re-processing invalid entries

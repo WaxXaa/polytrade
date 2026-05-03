@@ -1,33 +1,56 @@
-# ─── Build stage ──────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+# ─── Dev stage ────────────────────────────────────────────────────────────────
+FROM node:20-slim AS dev
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm ci --ignore-scripts
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
-COPY tsconfig.json ./
-COPY src ./src
+COPY pnpm-lock.yaml ./
+COPY backend/package.json ./
+RUN pnpm install
 
-RUN npm run build
+COPY backend/tsconfig.json backend/drizzle.config.ts ./
+COPY backend/src ./src
+COPY backend/drizzle ./drizzle
+
+EXPOSE 3000 3001
+
+CMD ["pnpm", "dev"]
+
+
+# ─── Build stage ──────────────────────────────────────────────────────────────
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+
+COPY pnpm-lock.yaml ./
+COPY backend/package.json ./
+RUN pnpm install
+
+COPY backend/tsconfig.json backend/drizzle.config.ts ./
+COPY backend/src ./src
+
+RUN pnpm build
+
 
 # ─── Production stage ─────────────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:20-slim AS runner
 
 WORKDIR /app
 
-# Install AWS CLI for Secrets Manager (via aws-sdk in Node, not CLI)
-# Only production deps
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev --ignore-scripts
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+
+COPY pnpm-lock.yaml ./
+COPY backend/package.json ./
+RUN pnpm install --prod
 
 COPY --from=builder /app/dist ./dist
-COPY drizzle ./drizzle
+COPY backend/drizzle ./drizzle
 
-# Create data directory for SQLite
 RUN mkdir -p /app/data
 
-# Non-root user for security
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 RUN chown -R appuser:appgroup /app
 USER appuser

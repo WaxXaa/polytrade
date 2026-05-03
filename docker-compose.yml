@@ -1,0 +1,53 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: ./backend/Dockerfile
+      target: dev
+    container_name: polymarket-backend
+    ports:
+      - "3000:3000"
+      - "3002:3001"
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - DB_PATH=file:data/agent.db
+      - PRIVATE_KEY=${PRIVATE_KEY:-}
+      - CLOB_API_KEY=${CLOB_API_KEY:-}
+      - CLOB_SECRET=${CLOB_SECRET:-}
+      - CLOB_PASSPHRASE=${CLOB_PASSPHRASE:-}
+    volumes:
+      - ./backend/src:/app/src:delegated
+      - ./backend/drizzle:/app/drizzle:delegated
+      - backend-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build:
+      context: .
+      dockerfile: ./frontend/Dockerfile
+      target: dev
+    container_name: polymarket-frontend
+    ports:
+      - "5174:5173"
+    environment:
+      - VITE_API_URL=http://localhost:3000
+      - VITE_WS_URL=http://localhost:3000
+    volumes:
+      - ./frontend/src:/app/src:delegated
+      - ./frontend/public:/app/public:delegated
+      - ./frontend/index.html:/app/index.html:delegated
+      - ./frontend/vite.config.ts:/app/vite.config.ts:delegated
+      - ./frontend/tailwind.config.js:/app/tailwind.config.js:delegated
+      - ./frontend/postcss.config.js:/app/postcss.config.js:delegated
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend-data:

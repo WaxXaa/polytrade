@@ -206,11 +206,14 @@ export interface StopLossEvent {
 
 export interface AgentStatus {
   running: boolean;
+  paused: boolean;
   topTradersCount: number;
   openPositionsCount: number;
   tradesLastHour: number;
   lastLeaderboardUpdate: Date | null;
   lastTradeCheck: Date | null;
+  mode: 'paper' | 'real';
+  balance: number;
 }
 
 export type WSEvent =

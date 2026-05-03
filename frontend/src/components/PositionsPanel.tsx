@@ -1,85 +1,118 @@
+import { PtBadge } from './ui/PtBadge';
 import { useAppStore } from '@/stores';
-import { formatCurrency, formatPercent } from '@/lib/utils';
-import { cn } from '@/lib/utils';
-import { Briefcase } from 'lucide-react';
+import { usePositions } from '@/hooks/useApi';
 
-export function PositionsPanel() {
-  const { positions } = useAppStore();
+function fmt$(n: number): string {
+  return (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+function fmtPct(n: number): string {
+  return (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+}
+function timeAgo(ts: number): string {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
 
-  const totalPnL = positions.reduce((acc, p) => acc + p.pnl, 0);
-  const totalValue = positions.reduce((acc, p) => acc + p.size, 0);
+interface PositionsPanelProps {
+  walletMode: 'simulation' | 'real';
+}
+
+export function PositionsPanel({ walletMode }: PositionsPanelProps) {
+  const { positions: storePositions } = useAppStore();
+  const { data: apiPositions } = usePositions();
+
+  const positions = apiPositions && apiPositions.length > 0
+    ? apiPositions.map((p) => ({
+        id: p.id,
+        marketId: p.conditionId,
+        marketQuestion: p.market,
+        side: p.direction,
+        size: p.size,
+        entryPrice: p.entryPrice,
+        currentPrice: p.entryPrice,
+        pnl: 0,
+        pnlPercent: 0,
+        stopLoss: p.stopLossLevel,
+        timestamp: new Date(p.openedAt).getTime(),
+      }))
+    : storePositions;
+
+  const totalPnl = positions.reduce((a, p) => a + p.pnl, 0);
 
   return (
-    <div className="cyber-border rounded-xl p-4 h-full">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-bold flex items-center gap-2">
-          <Briefcase className="w-5 h-5 text-magenta-500" />
-          POSITIONS
-        </h2>
-        <span className="text-xs text-muted-foreground">
-          {positions.length} active
-        </span>
-      </div>
-
-      {/* Summary */}
-      <div className="grid grid-cols-2 gap-2 mb-4 p-3 rounded-lg bg-card/50">
+    <div className="pt-fade-up" style={{ maxWidth: 1100, margin: '0 auto', width: '100%' }}>
+      {/* Page header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
-          <div className="text-xs text-muted-foreground">Total Value</div>
-          <div className="font-mono font-bold">{formatCurrency(totalValue)}</div>
+          <h2 style={{ fontSize: 20, fontWeight: 700 }}>Positions</h2>
+          <span style={{ fontSize: 13, color: 'var(--pt-text-3)' }}>
+            {walletMode === 'simulation' ? 'Simulation wallet' : 'Real wallet'} · {positions.length} open
+          </span>
         </div>
-        <div>
-          <div className="text-xs text-muted-foreground">Total P&L</div>
-          <div className={cn(
-            "font-mono font-bold",
-            totalPnL >= 0 ? "text-green-400" : "text-red-400"
-          )}>
-            {formatCurrency(totalPnL)}
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 12, color: 'var(--pt-text-3)' }}>Unrealized P&L</div>
+          <div style={{
+            fontFamily: 'var(--pt-mono)', fontSize: 20, fontWeight: 700,
+            color: totalPnl >= 0 ? 'var(--pt-green)' : 'var(--pt-red)',
+          }}>
+            {fmt$(totalPnl)}
           </div>
         </div>
       </div>
 
-      {/* Positions List */}
-      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
-        {positions.length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-sm text-muted-foreground">
-              No open positions
-            </p>
-          </div>
-        ) : (
-          positions.map((position) => (
-            <div
-              key={position.id}
-              className="p-3 rounded-lg border border-white/10 bg-card/50"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className={cn(
-                  "px-2 py-0.5 rounded text-xs font-bold",
-                  position.side === 'BUY' 
-                    ? "bg-green-500/20 text-green-400" 
-                    : "bg-red-500/20 text-red-400"
-                )}>
-                  {position.side}
-                </span>
-                <span className={cn(
-                  "font-mono text-sm",
-                  position.pnl >= 0 ? "text-green-400" : "text-red-400"
-                )}>
-                  {formatPercent(position.pnlPercent)}
-                </span>
-              </div>
-              
-              <div className="text-sm truncate mb-1">
-                {position.marketQuestion?.slice(0, 25)}...
-              </div>
-              
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Entry: {position.entryPrice.toFixed(2)}</span>
-                <span>Current: {position.currentPrice.toFixed(2)}</span>
-              </div>
-            </div>
-          ))
-        )}
+      {/* Table */}
+      <div style={{ background: 'var(--pt-surface-1)', border: '1px solid var(--pt-border)', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--pt-border)' }}>
+                {['Market', 'Side', 'Size', 'Entry', 'Current', 'P&L', 'Trader', 'Opened'].map(h => (
+                  <th key={h} style={{
+                    padding: '12px 16px', textAlign: 'left', fontSize: 11,
+                    color: 'var(--pt-text-3)', fontWeight: 600,
+                    letterSpacing: '0.5px', textTransform: 'uppercase',
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {positions.length === 0 ? (
+                <tr>
+                  <td colSpan={8} style={{ padding: 32, textAlign: 'center', color: 'var(--pt-text-3)' }}>
+                    No open positions
+                  </td>
+                </tr>
+              ) : (
+                positions.map(p => (
+                  <tr
+                    key={p.id}
+                    style={{ borderBottom: '1px solid var(--pt-border)', transition: 'background 0.15s' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--pt-surface-2)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <td style={{ padding: '12px 16px', fontWeight: 500, maxWidth: 220, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {p.marketQuestion?.slice(0, 30) ?? p.marketId}…
+                    </td>
+                    <td style={{ padding: '12px 16px' }}>
+                      <PtBadge variant={p.side === 'BUY' ? 'buy' : 'sell'}>{p.side}</PtBadge>
+                    </td>
+                    <td style={{ padding: '12px 16px', fontFamily: 'var(--pt-mono)' }}>{fmt$(p.size)}</td>
+                    <td style={{ padding: '12px 16px', fontFamily: 'var(--pt-mono)', color: 'var(--pt-text-2)' }}>{p.entryPrice.toFixed(2)}</td>
+                    <td style={{ padding: '12px 16px', fontFamily: 'var(--pt-mono)' }}>{p.currentPrice.toFixed(2)}</td>
+                    <td style={{ padding: '12px 16px', fontFamily: 'var(--pt-mono)', fontWeight: 600, color: p.pnl >= 0 ? 'var(--pt-green)' : 'var(--pt-red)' }}>
+                      {fmt$(p.pnl)} <span style={{ fontSize: 11, opacity: 0.7 }}>({fmtPct(p.pnlPercent)})</span>
+                    </td>
+                    <td style={{ padding: '12px 16px', color: 'var(--pt-text-2)' }}>—</td>
+                    <td style={{ padding: '12px 16px', color: 'var(--pt-text-3)', fontSize: 12 }}>{timeAgo(p.timestamp)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

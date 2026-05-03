@@ -75,11 +75,14 @@ export interface RiskAlert {
 
 export interface AgentStatus {
   running: boolean;
+  paused: boolean;
   topTradersCount: number;
   openPositionsCount: number;
   tradesLastHour: number;
   lastLeaderboardUpdate: string | null;
   lastTradeCheck: string | null;
+  mode?: 'paper' | 'real';
+  balance?: number;
 }
 
 export type WSEvent =

@@ -1,87 +1,99 @@
 import { useMemo } from 'react';
-import { DollarSign, TrendingUp, Activity, Zap } from 'lucide-react';
+import { Icon } from './ui/Icon';
+import { PtCard } from './ui/PtCard';
 import { useAppStore } from '@/stores';
-import { formatCurrency, formatPercent, formatCompactNumber } from '@/lib/utils';
-import { cn } from '@/lib/utils';
+import { useAgentStatus } from '@/hooks/useApi';
 
-interface StatCardProps {
-  title: string;
-  value: string;
-  change?: string;
-  icon: React.ReactNode;
-  trend?: 'up' | 'down' | 'neutral';
+function fmt$(n: number): string {
+  return (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
-function StatCard({ title, value, change, icon, trend = 'neutral' }: StatCardProps) {
+function fmtPct(n: number): string {
+  return (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+}
+
+interface StatCardProps {
+  label: string;
+  value: string;
+  sub: string;
+  icon: 'dollar' | 'trend' | 'chart' | 'users';
+  color: string;
+  dim?: boolean;
+}
+
+function StatCard({ label, value, sub, icon, color, dim }: StatCardProps) {
   return (
-    <div className="cyber-border rounded-xl p-4 lg:p-6 hover:glow-cyan transition-all duration-300">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm text-muted-foreground">{title}</span>
-        <div className="text-cyan-400">{icon}</div>
+    <PtCard style={{ padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <span style={{ fontSize: 12, color: 'var(--pt-text-3)', fontWeight: 500 }}>{label}</span>
+        <span style={{ color, opacity: dim ? 0.3 : 0.7 }}><Icon name={icon} size={16} /></span>
       </div>
-      <div className="text-2xl lg:text-3xl font-bold font-mono">{value}</div>
-      {change && (
-        <div className={cn(
-          "text-sm font-medium mt-1",
-          trend === 'up' && "text-green-400",
-          trend === 'down' && "text-red-400",
-          trend === 'neutral' && "text-muted-foreground"
-        )}>
-          {change}
-        </div>
-      )}
-    </div>
+      <div style={{
+        fontFamily: 'var(--pt-mono)', fontSize: 22, fontWeight: 700, letterSpacing: '-0.5px',
+        color: dim ? 'var(--pt-text-3)' : undefined,
+      }}>
+        {value}
+      </div>
+      <div style={{ fontSize: 12, color: dim ? 'var(--pt-text-3)' : color, fontWeight: 500, marginTop: 2, fontFamily: 'var(--pt-mono)' }}>
+        {sub}
+      </div>
+    </PtCard>
   );
 }
 
-export function StatsCards() {
-  const { positions, tradeSignals, traders, walletConnected, walletAddress } = useAppStore();
+interface StatsCardsProps {
+  walletMode: 'simulation' | 'real';
+}
 
-  // Calculate stats from positions
-  const stats = useMemo(() => {
-    const totalValue = positions.reduce((acc, p) => acc + p.size, 0);
-    const totalPnL = positions.reduce((acc, p) => acc + p.pnl, 0);
-    const pnlPercent = totalValue > 0 ? (totalPnL / totalValue) * 100 : 0;
-    const tradesToday = tradeSignals.filter(s => {
-      const today = new Date().toDateString();
-      return new Date(s.timestamp).toDateString() === today;
-    }).length;
-    const activeTraders = traders.filter(t => t.following).length;
+export function StatsCards({ walletMode }: StatsCardsProps) {
+  const { positions, tradeHistoryList, balance: storeBalance } = useAppStore();
+  const { data: agentStatus } = useAgentStatus();
 
-    return {
-      balance: 12500, // Would come from wallet
-      pnl: totalPnL,
-      pnlPercent,
-      tradesToday,
-      activeTraders,
-    };
-  }, [positions, tradeSignals, traders]);
+  const balance = agentStatus?.balance ?? storeBalance ?? 100;
+  const monitoredCount = agentStatus?.topTradersCount ?? 0;
+  const tradesExecuted = tradeHistoryList.filter(t => t.status === 'SUCCESS').length;
+
+  const { totalPnl, pnlPct } = useMemo(() => {
+    const totalPnl = positions.reduce((a, p) => a + p.pnl, 0);
+    const pnlPct   = balance > 0 ? (totalPnl / balance) * 100 : 0;
+    return { totalPnl, pnlPct };
+  }, [positions, balance]);
+
+  const hasTrades = tradesExecuted > 0;
+  const pnlColor  = totalPnl >= 0 ? 'var(--pt-green)' : 'var(--pt-red)';
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
       <StatCard
-        title="Wallet Balance"
-        value={formatCurrency(stats.balance)}
-        icon={<DollarSign className="w-5 h-5" />}
+        label="Balance"
+        value={fmt$(balance)}
+        sub={walletMode === 'simulation' ? 'Paper wallet' : 'Real wallet'}
+        icon="dollar"
+        color="var(--pt-accent)"
       />
       <StatCard
-        title="Total P&L"
-        value={formatCurrency(stats.pnl)}
-        change={formatPercent(stats.pnlPercent)}
-        icon={<TrendingUp className="w-5 h-5" />}
-        trend={stats.pnlPercent >= 0 ? 'up' : 'down'}
+        label="Profit / Loss"
+        value={hasTrades ? fmt$(totalPnl) : '—'}
+        sub={hasTrades ? fmtPct(pnlPct) : 'No trades yet'}
+        icon="trend"
+        color={hasTrades ? pnlColor : 'var(--pt-text-3)'}
+        dim={!hasTrades}
       />
       <StatCard
-        title="Trades Today"
-        value={stats.tradesToday.toString()}
-        icon={<Activity className="w-5 h-5" />}
+        label="Monitoring"
+        value={monitoredCount > 0 ? String(monitoredCount) : '—'}
+        sub={monitoredCount > 0 ? 'top traders' : 'Loading…'}
+        icon="users"
+        color="var(--pt-accent)"
+        dim={monitoredCount === 0}
       />
       <StatCard
-        title="Active Traders"
-        value={stats.activeTraders.toString()}
-        change={walletConnected ? 'Connected' : 'Not connected'}
-        icon={<Zap className="w-5 h-5" />}
-        trend={walletConnected ? 'up' : 'neutral'}
+        label="Trades Executed"
+        value={hasTrades ? String(tradesExecuted) : '—'}
+        sub={hasTrades ? 'successful trades' : 'Agent watching markets'}
+        icon="chart"
+        color="var(--pt-green)"
+        dim={!hasTrades}
       />
     </div>
   );

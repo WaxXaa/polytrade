@@ -1,6 +1,6 @@
-import { useAgent } from '../context/AgentContext.js';
-import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card.js';
-import { Separator } from './components/ui/separator.js';
+import { useAgent } from '../context/AgentContext';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Separator } from './ui/separator';
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (

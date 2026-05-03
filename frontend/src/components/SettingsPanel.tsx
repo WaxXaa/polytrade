@@ -1,156 +1,102 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
+import { Icon } from './ui/Icon';
+import { PtCard } from './ui/PtCard';
+import { Toggle } from './ui/Toggle';
 import { useAppStore } from '@/stores';
-import { Settings, Save } from 'lucide-react';
-import { Button } from './ui/button';
-import { cn } from '@/lib/utils';
 
-export function SettingsPanel() {
-  const { riskConfig, setRiskConfig, autoExecute, setAutoExecute } = useAppStore();
-  const [localConfig, setLocalConfig] = useState(riskConfig);
+interface SettingsPanelProps {
+  agentActive: boolean;
+  setAgentActive: (v: boolean) => void;
+  autoExecute: boolean;
+  setAutoExecute: (v: boolean) => void;
+}
 
-  const handleSave = () => {
-    setRiskConfig(localConfig);
+export function SettingsPanel({ agentActive, setAgentActive, autoExecute, setAutoExecute }: SettingsPanelProps) {
+  const { riskConfig, setRiskConfig } = useAppStore();
+  const [local, setLocal] = useState(riskConfig);
+
+  const handleSave = () => setRiskConfig(local);
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '10px 12px', borderRadius: 8,
+    border: '1px solid var(--pt-border)', background: 'var(--pt-surface-2)',
+    color: 'var(--pt-text-1)', fontSize: 14, fontFamily: 'var(--pt-mono)', outline: 'none',
   };
 
   return (
-    <div className="cyber-border rounded-xl p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-bold flex items-center gap-2">
-          <Settings className="w-5 h-5 text-cyan-400" />
-          SETTINGS
-        </h2>
-      </div>
+    <div className="pt-fade-up" style={{ maxWidth: 700, margin: '0 auto', width: '100%' }}>
+      <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 20 }}>Settings</h2>
 
-      {/* Auto Execute Toggle */}
-      <div className="mb-6 p-3 rounded-lg bg-card/50">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="font-medium">Auto Execute</div>
-            <div className="text-xs text-muted-foreground">
-              Automatically copy trades
+      {/* Agent controls */}
+      <PtCard style={{ padding: 24, marginBottom: 16 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Agent Controls</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <Toggle
+            label="Agent Active"
+            subtitle="Enable or disable the copy trading agent"
+            value={agentActive}
+            onChange={setAgentActive}
+          />
+          <Toggle
+            label="Auto Execute"
+            subtitle="Automatically copy trades from followed traders"
+            value={autoExecute}
+            onChange={setAutoExecute}
+          />
+        </div>
+      </PtCard>
+
+      {/* Risk management */}
+      <PtCard style={{ padding: 24, marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <Icon name="shield" size={18} />
+          <h3 style={{ fontSize: 15, fontWeight: 600 }}>Risk Management</h3>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          {([
+            { label: 'Max Risk / Trade (%)', key: 'maxRiskPerTrade' as const, factor: 100, min: 1, max: 50 },
+            { label: 'Stop Loss (%)',        key: 'stopLossPercent' as const,  factor: 100, min: 5, max: 50 },
+            { label: 'Max Trades / Day',    key: 'maxTradesPerDay' as const,  factor: 1,   min: 1, max: 100 },
+            { label: 'Min Position ($)',    key: 'minPositionSize' as const,  factor: 1,   min: 1, max: 1000 },
+          ] as const).map(f => (
+            <div key={f.key}>
+              <label style={{ display: 'block', fontSize: 12, color: 'var(--pt-text-3)', marginBottom: 6, fontWeight: 500 }}>
+                {f.label}
+              </label>
+              <input
+                type="number"
+                value={local[f.key] * f.factor}
+                onChange={e => setLocal({ ...local, [f.key]: parseFloat(e.target.value) / f.factor })}
+                min={f.min}
+                max={f.max}
+                style={inputStyle}
+              />
             </div>
-          </div>
-          <button
-            onClick={() => setAutoExecute(!autoExecute)}
-            className={cn(
-              "w-12 h-6 rounded-full transition-colors",
-              autoExecute ? "bg-cyan-500" : "bg-gray-600"
-            )}
-          >
-            <div className={cn(
-              "w-5 h-5 rounded-full bg-white transition-transform",
-              autoExecute ? "translate-x-6" : "translate-x-0.5"
-            )} />
-          </button>
-        </div>
-      </div>
-
-      {/* Risk Settings */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-muted-foreground">Risk Management</h3>
-        
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">
-              Max Risk/Trade %
-            </label>
-            <input
-              type="number"
-              value={localConfig.maxRiskPerTrade * 100}
-              onChange={(e) => setLocalConfig({
-                ...localConfig,
-                maxRiskPerTrade: parseFloat(e.target.value) / 100
-              })}
-              className="w-full bg-card border border-white/10 rounded px-3 py-2 text-sm"
-              min="1"
-              max="50"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">
-              Stop Loss %
-            </label>
-            <input
-              type="number"
-              value={localConfig.stopLossPercent * 100}
-              onChange={(e) => setLocalConfig({
-                ...localConfig,
-                stopLossPercent: parseFloat(e.target.value) / 100
-              })}
-              className="w-full bg-card border border-white/10 rounded px-3 py-2 text-sm"
-              min="5"
-              max="50"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">
-              Max Trades/Day
-            </label>
-            <input
-              type="number"
-              value={localConfig.maxTradesPerDay}
-              onChange={(e) => setLocalConfig({
-                ...localConfig,
-                maxTradesPerDay: parseInt(e.target.value)
-              })}
-              className="w-full bg-card border border-white/10 rounded px-3 py-2 text-sm"
-              min="1"
-              max="100"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">
-              Min Position ($)
-            </label>
-            <input
-              type="number"
-              value={localConfig.minPositionSize}
-              onChange={(e) => setLocalConfig({
-                ...localConfig,
-                minPositionSize: parseFloat(e.target.value)
-              })}
-              className="w-full bg-card border border-white/10 rounded px-3 py-2 text-sm"
-              min="1"
-            />
-          </div>
+          ))}
         </div>
 
-        {/* Trailing Stop */}
-        <div className="flex items-center justify-between p-3 rounded-lg bg-card/50">
-          <div>
-            <div className="font-medium">Trailing Stop</div>
-            <div className="text-xs text-muted-foreground">
-              Move stop loss as price moves
-            </div>
-          </div>
-          <button
-            onClick={() => setLocalConfig({
-              ...localConfig,
-              trailingStop: !localConfig.trailingStop
-            })}
-            className={cn(
-              "w-12 h-6 rounded-full transition-colors",
-              localConfig.trailingStop ? "bg-cyan-500" : "bg-gray-600"
-            )}
-          >
-            <div className={cn(
-              "w-5 h-5 rounded-full bg-white transition-transform",
-              localConfig.trailingStop ? "translate-x-6" : "translate-x-0.5"
-            )} />
-          </button>
+        <div style={{ marginTop: 16 }}>
+          <Toggle
+            label="Trailing Stop"
+            subtitle="Move stop loss as price moves in your favour"
+            value={local.trailingStop}
+            onChange={v => setLocal({ ...local, trailingStop: v })}
+          />
         </div>
+      </PtCard>
 
-        <Button
-          onClick={handleSave}
-          className="w-full gap-2 bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 hover:bg-cyan-500/30"
-        >
-          <Save className="w-4 h-4" />
-          Save Settings
-        </Button>
-      </div>
+      <button
+        onClick={handleSave}
+        style={{
+          width: '100%', padding: 12, borderRadius: 10, border: 'none',
+          background: 'var(--pt-accent)', color: '#fff',
+          fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--pt-font)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        }}
+      >
+        <Icon name="save" size={16} /> Save Settings
+      </button>
     </div>
   );
 }

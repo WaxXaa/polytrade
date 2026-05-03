@@ -26,6 +26,8 @@ export interface TradeExecutor {
   executeOrder(order: OrderParams): Promise<OrderResult>;
   checkApprovals(wallet: string): Promise<ApprovalStatus>;
   getMarketSpread(tokenId: string): Promise<number>;
+  initialize?(walletAddress: string): Promise<void>;
+  stop?(): void;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -64,7 +66,16 @@ export class TradeExecutorImpl implements TradeExecutor {
     private readonly clobApiKey: string,
     private readonly clobSecret: string,
     private readonly clobPassphrase: string,
+    private readonly _privateKey?: string,
   ) {}
+
+  async initialize(_walletAddress: string): Promise<void> {
+    // TODO: use ClobClient from @polymarket/clob-client-v2 with _privateKey
+  }
+
+  stop(): void {
+    // TODO: cleanup ClobClient connection
+  }
 
   /**
    * Sends an order to the CLOB API.

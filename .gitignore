@@ -8,15 +8,20 @@ dist/
 build/
 *.tsbuildinfo
 
+# Vite generated files (not in dist/)
+vite.config.d.ts
+vite.config.js
+
 # Environment files
 .env
 .env.local
 .env.*.local
 
-# Database files
+# Database files & directories
 *.db
 *.sqlite
 *.sqlite3
+backend/data/
 
 # Logs
 logs/
@@ -41,3 +46,11 @@ Thumbs.db
 
 # Vite
 .vite/
+
+# Archives
+*.zip
+*.tar.gz
+*.tgz
+
+# Docker (keep compose file, ignore env overrides)
+docker-compose.override.yml

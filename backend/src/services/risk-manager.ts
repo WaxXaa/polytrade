@@ -42,6 +42,9 @@ export interface RiskManager {
 
   /** Records a trade execution in the sliding-window counter. */
   recordExecution(): void;
+
+  /** Returns the number of trade executions in the last hour. */
+  getExecutionsLastHour(): number;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -225,6 +228,15 @@ export class RiskManagerImpl implements RiskManager {
    */
   recordExecution(): void {
     this.executionTimestamps.push(Date.now());
+  }
+
+  /**
+   * Returns the number of trade executions recorded in the last hour.
+   * Prunes stale timestamps before counting.
+   */
+  getExecutionsLastHour(): number {
+    this.pruneStaleTimestamps();
+    return this.executionTimestamps.length;
   }
 
   // ─── Private helpers ────────────────────────────────────────────────────────
